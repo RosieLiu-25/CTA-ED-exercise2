@@ -1,7 +1,7 @@
 ---
 title: "CTA-ED Exercise 2: dictionary-based methods"
-author: "Marion Lieutaud"
-date: "2/14/2024"
+author: "Ziyan Jin & Ruisi Liu"
+date: "2/10/2025"
 output: html_document
 ---
 
@@ -116,6 +116,7 @@ tweets %>%
 ```
 
 We manipulate the data into tidy format again, unnesting each token (here: words) from the tweet text. 
+# desc means sorting columns in a data frame in descending order
 
 ```{r}
 tidy_tweets <- tweets %>% 
@@ -156,6 +157,7 @@ get_sentiments("nrc")
 What do we see here. First, the `AFINN` lexicon gives words a score from -5 to +5, where more negative scores indicate more negative sentiment and more positive scores indicate more positive sentiment.  The `nrc` lexicon opts for a binary classification: positive, negative, anger, anticipation, disgust, fear, joy, sadness, surprise, and trust, with each word given a score of 1/0 for each of these sentiments. In other words, for the `nrc` lexicon, words appear multiple times if they enclose more than one such emotion (see, e.g., "abandon" above). The `bing` lexicon is most minimal, classifying words simply into binary "positive" or "negative" categories. 
 
 Let's see how we might filter the texts by selecting a dictionary, or subset of a dictionary, and using `inner_join()` to then filter out tweet data. We might, for example, be interested in fear words. Maybe, we might hypothesize, there is a uptick of fear toward the beginning of the coronavirus outbreak. First, let's have a look at the words in our tweet data that the `nrc` lexicon codes as fear-related words.
+# frequency of fear-related words in tidy_tweets
 
 ```{r}
 
@@ -251,6 +253,7 @@ We see that they do look pretty similar... and interestingly it seems that overa
 Of course, list- or dictionary-based methods need not only focus on sentiment, even if this is one of their most common uses. In essence, what you'll have seen from the above is that sentiment analysis techniques rely on a given lexicon and score words appropriately. And there is nothing stopping us from making our own dictionaries, whether they measure sentiment or not. In the data above, we might be interested, for example, in the prevalence of mortality-related words in the news. As such, we might choose to make our own dictionary of terms. What would this look like?
 
 A very minimal example would choose, for example, words like "death" and its synonyms and score these all as 1. We would then combine these into a dictionary, which we've called "mordict" here. 
+# create your own dictionary
 
 ```{r}
 word <- c('death', 'illness', 'hospital', 'life', 'health',
@@ -316,9 +319,12 @@ We will conduct the analysis using the `quanteda` package. You will see that we 
 With the `quanteda` package we first need to create a "corpus" object, by declaring our tweets a corpus object. Here, we make sure our date column is correctly stored and then create the corpus object with the `corpus()` function. Note that we are specifying the `text_field` as "tweet" as this is where our text data of interest is, and we are including information on the date that tweet was published. This information is specified with the `docvars` argument. You'll see then that the corpus consists of the text and so-called "docvars," which are just the variables (columns) in the original dataset. Here, we have only included the date column.
 
 ```{r}
+library("quanteda")
+
 tweets$date <- as.Date(tweets$created_at)
 
 tweet_corpus <- corpus(tweets, text_field = "tweet", docvars = "date")
+head(docvars(tweet_corpus))
 ```
 
 
@@ -390,6 +396,37 @@ docvars(toks_news) # ok all docvars are there
 
 # look at how many different newspaper we have in the dataset
 unique(docvars(toks_news)$username)
+
+create_subset <- function(corpus, username) {
+  subset_corpus <- corpus_subset(corpus, username == !!username)
+  return(subset_corpus)
+}
+
+analyze_sentiment <- function(corpus, sentiment_dict) {
+  tidy_tweets <- tidy(corpus)
+  
+  sentiment_data <- tidy_tweets %>%
+    inner_join(get_sentiments(sentiment_dict)) %>%
+    count(username, sentiment) %>%
+    spread(sentiment, n, fill = 0) %>%
+    mutate(sentiment = positive - negative)
+  
+  ggplot(sentiment_data, aes(username, sentiment)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(method = loess, alpha = 0.25) +
+    ylab(paste(sentiment_dict, "sentiment"))
+}
+
+tidy_tweets %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(username, index = order %/% 1000, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  ggplot(aes(username, sentiment)) +
+  geom_point(alpha=0.5) +
+  geom_smooth(method= loess, alpha=0.25) +
+  ylab("bing sentiment")
+
 ```
 
 ```{r}
@@ -527,6 +564,57 @@ tidy_tweets %>%
 
 ```
 
-3. Apply the Lexicoder Sentiment Dictionary to the news tweets, but break down the analysis by newspaper
+
+```{r}
+# 3. Apply the Lexicoder Sentiment Dictionary to the news tweets, but break down the analysis by newspaper
+
+data("data_dictionary_LSD2015")
+
+create_subset <- function(corpus, username) {
+  subset_corpus <- corpus_subset(corpus, username == !!username)
+  return(subset_corpus)
+}
+
+analyze_sentiment <- function(corpus, sentiment_dict) {
+  tidy_tweets <- tidy(corpus)
+  
+  sentiment_data <- tidy_tweets %>%
+    inner_join(get_sentiments(sentiment_dict)) %>%
+    count(username, sentiment) %>%
+    spread(sentiment, n, fill = 0) %>%
+    mutate(sentiment = positive - negative)
+  
+  ggplot(sentiment_data, aes(username, sentiment)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(method = loess, alpha = 0.25) +
+    ylab(paste(sentiment_dict, "sentiment"))
+}
+
+newspaper_sources <- unique(docvars(toks_news)$username)
+
+sentiment_dict <- "data_dictionary_LSD2015"
+sentiment_results <- list()
+
+for (source in newspaper_sources) {
+  subset_corpus <- create_subset(toks_news, source)
+  sentiment_plot <- analyze_sentiment(subset_corpus, sentiment_dict)
+  sentiment_results[[source]] <- sentiment_plot
+}
+
+tidy_tweets %>%
+  mutate(obs=1) %>%
+  filter(grepl(paste0(data_dictionary_LSD2015, collapse = "|"), word, ignore.case = T)) %>%
+  group_by(username) %>%
+  summarise(sum_mwords = sum(obs)) %>%
+  full_join(totals, word, by="username") %>%
+  mutate(sum_mwords= ifelse(is.na(sum_mwords), 0, sum_mwords),
+         pctmwords = sum_mwords/sum_words) %>%
+  ggplot(aes(username, pctmwords)) +
+  geom_point(alpha=0.5) +
+  geom_smooth(method= loess, alpha=0.25) +
+  xlab("Newspaper") + ylab("% sentiment")
+
+```
+
 4. Don't forget to 'knit' to produce your final html output for the exercise.
 
